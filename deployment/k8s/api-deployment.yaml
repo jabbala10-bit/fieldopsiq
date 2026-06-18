@@ -1,0 +1,119 @@
+# FieldOpsIQ — Kubernetes manifests.
+#
+# NOTE ON APPLICABILITY: FieldOpsIQ's primary deployment target is a single
+# field device (ADR-005, ADR-009), not a Kubernetes cluster. These manifests
+# are included for two realistic scenarios that DO involve k8s:
+#   1. A "reference/demo" central environment used to validate the API
+#      contract that real field devices integrate against in staging.
+#   2. A site-level gateway deployment where a single rugged edge server
+#      (running k3s or similar) serves several technicians' tablets over
+#      local WiFi, rather than each tablet running its own full stack.
+# It is not intended to represent "FieldOpsIQ runs in a multi-replica cloud
+# deployment" — the offline-first architecture assumes a single SQLite
+# writer (ADR-005), so this manifest deliberately uses replicas: 1.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fieldopsiq-api
+  labels:
+    app: fieldopsiq-api
+spec:
+  replicas: 1  # single-writer SQLite design — do not scale horizontally
+  strategy:
+    type: Recreate  # avoid two pods writing to the same SQLite volume
+  selector:
+    matchLabels:
+      app: fieldopsiq-api
+  template:
+    metadata:
+      labels:
+        app: fieldopsiq-api
+    spec:
+      containers:
+        - name: api
+          image: fieldopsiq-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: OLLAMA_BASE_URL
+              value: "http://fieldopsiq-ollama:11434"
+            - name: SQLITE_PATH
+              value: "/app/data/fieldopsiq.db"
+            - name: API_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fieldopsiq-secrets
+                  key: api-auth-token
+            - name: CENTRAL_SERVER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fieldopsiq-secrets
+                  key: central-server-api-key
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: whisper-models
+              mountPath: /app/models/whisper
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: fieldopsiq-data-pvc
+        - name: whisper-models
+          persistentVolumeClaim:
+            claimName: fieldopsiq-whisper-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fieldopsiq-api
+spec:
+  selector:
+    app: fieldopsiq-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fieldopsiq-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fieldopsiq-whisper-models-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 3Gi

@@ -1,0 +1,71 @@
+# FieldOpsIQ — full local/field-device stack: API + UI + Ollama.
+#
+# Usage:
+#   docker compose -f deployment/docker/docker-compose.yml up -d
+#   docker compose -f deployment/docker/docker-compose.yml exec ollama ollama pull llama3.1:8b
+#
+# All three services are designed to run together on a single field device —
+# there is no expectation of multi-node orchestration here (see ADR-005, ADR-009).
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: fieldopsiq-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+    container_name: fieldopsiq-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - API_AUTH_TOKEN=${API_AUTH_TOKEN}
+      - CENTRAL_SERVER_URL=${CENTRAL_SERVER_URL:-https://ops-central.example.com/api/v1/reports}
+      - CENTRAL_SERVER_API_KEY=${CENTRAL_SERVER_API_KEY}
+      - SQLITE_PATH=/app/data/fieldopsiq.db
+      - LOG_FORMAT=json
+    volumes:
+      - fieldopsiq_data:/app/data
+      - whisper_models:/app/models/whisper
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.ui
+    container_name: fieldopsiq-ui
+    ports:
+      - "7860:7860"
+    environment:
+      - FIELDOPSIQ_API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  fieldopsiq_data:
+  whisper_models:

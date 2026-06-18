@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fieldopsiq-ollama
+  labels:
+    app: fieldopsiq-ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fieldopsiq-ollama
+  template:
+    metadata:
+      labels:
+        app: fieldopsiq-ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /root/.ollama
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+            limits:
+              cpu: "4"
+              memory: "12Gi"
+      volumes:
+        - name: ollama-models
+          persistentVolumeClaim:
+            claimName: fieldopsiq-ollama-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fieldopsiq-ollama
+spec:
+  selector:
+    app: fieldopsiq-ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fieldopsiq-ollama-models-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fieldopsiq-ui
+  labels:
+    app: fieldopsiq-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fieldopsiq-ui
+  template:
+    metadata:
+      labels:
+        app: fieldopsiq-ui
+    spec:
+      containers:
+        - name: ui
+          image: fieldopsiq-ui:latest
+          ports:
+            - containerPort: 7860
+          env:
+            - name: FIELDOPSIQ_API_URL
+              value: "http://fieldopsiq-api:8000"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fieldopsiq-ui
+spec:
+  selector:
+    app: fieldopsiq-ui
+  ports:
+    - port: 7860
+      targetPort: 7860
+  type: LoadBalancer
